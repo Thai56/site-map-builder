@@ -1,7 +1,11 @@
+/* @Test url for testing the GET requests
+ *TEST_URLS: "http://example.com/" http://calhoun.io
+ */
 package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"github.com/gophercises/html-link-parser-4/src"
@@ -9,6 +13,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -21,93 +26,88 @@ func isValidUrl(potentialUrl string) bool {
 	}
 }
 
-func getUrlFlag() *string {
-	urlFlag := flag.String("url", "http://www.calhoun.io", "flag for url")
-
-	flag.Parse()
-
-	if urlNotValid := !isValidUrl(*urlFlag); urlNotValid {
-		panic(
-			fmt.Sprintf(
-				"not a valid url please follow the format: http://www.{your_url_name} | URL%v:",
-				*urlFlag,
-			),
-		)
-	}
-
-	return urlFlag
-}
-
 func getDomainFromUrl(u string) string {
 	domainSlice := strings.Split(u, ".")
 	domain := domainSlice[len(domainSlice)-2] + "." + domainSlice[len(domainSlice)-1]
 	return domain
 }
 
-//TODO: make urlMap a type struct and add this method to it
-func updateUrlMapIfKeyDoesNotExist(m map[string]string, target string, title string) { /*TODO: Take out title if necessary*/
-	if _, ok := m[target]; !ok {
-		m[target] = title
+var visited = make(map[string]bool)
+
+func main() {
+	flag.Parse()
+	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Println("Please specify start page")
+		os.Exit(1)
 	}
+
+	fmt.Println("args", args)
+	queue := make(chan string)
+
+	go func() { queue <- args[0] }()
+
+	for uri := range queue {
+		enqueue(uri, queue)
+	}
+	fmt.Println("REACHING_THE_END")
 }
 
-// TEST_URLS: "http://example.com/" http://calhoun.io
-func main() {
-	urlFlag := getUrlFlag()
-
-	res, err := http.Get(*urlFlag)
-	if err != nil {
-		fmt.Printf("%v\n: ", err)
+func enqueue(uri string, queue chan string) {
+	//TODO: add uri to visited since we just got our return
+	visited[uri] = true
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
 	}
-	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	client := http.Client{Transport: transport}
+
+	resp, err := client.Get(uri)
+	if err != nil {
+		return
+	}
+
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
 
 	doc, err := html.Parse(bytes.NewReader(body))
 
 	links, err := linkParser.GetLinks(doc)
 	if err != nil {
-		fmt.Printf("Could not get links %v:", err)
+		fmt.Println("Could not get links", err)
 	}
 
 	listOfLinks := linkParser.FormatLinksStruct(links)
 
-	mainDomain := getDomainFromUrl(*urlFlag)
-
-	urlMap := make(map[string]string)
-
-	for _, l := range listOfLinks {
-		if firstChar := string(l.Href[0]); firstChar == "/" {
-			updateUrlMapIfKeyDoesNotExist(urlMap, l.Href, l.Title)
-		} else if strings.Contains(l.Href, mainDomain) {
-			updateUrlMapIfKeyDoesNotExist(urlMap, l.Href, l.Title)
+	for _, link := range listOfLinks {
+		absolute := fixUrl(link.Href, uri)
+		if uri == "" {
+			fmt.Println("__URI_EMPTY")
+		}
+		if uri != "" {
+			if !visited[absolute] {
+				go func() { queue <- absolute }()
+			}
 		}
 	}
 
-	fmt.Println("urlMap \n", urlMap)
+	//TODO: check if the visiting address is related to the original argument passed in
+	fmt.Println("__VISITED", visited)
+}
 
-	//TODO: MAIN WORK IS BELOW HERE
-	//TODO: loop or recurse through each link in the map
-	//TODO: visit the link and create a url list out of the links
-	//TODO: start off by just doing the first link in the map
-	for k, _ := range urlMap {
-		if string(k[0]) == "/" {
-			res, err := http.Get("http://www." + mainDomain + k)
-			if err != nil {
-				fmt.Printf("Could not get the domain of subdomain") // TODO: make this error clearer
-			}
-			defer res.Body.Close()
-
-			//TODO: refactor this method and the one above
-			body, err := ioutil.ReadAll(res.Body)
-			if err != nil {
-				fmt.Printf("could not get body %v", err)
-			}
-			//TODO: Handle the error here
-			doc, err := html.Parse(bytes.NewReader(body))
-			//TODO: Handle the error here
-			links, _ := linkParser.GetLinks(doc)
-			fmt.Println("Got tha body!!!", linkParser.FormatLinksStruct(links))
-		} /*TODO: else just get the url given because it must contain the domain name already*/
+func fixUrl(href, base string) string {
+	uri, err := url.Parse(href)
+	if err != nil {
+		return ""
 	}
+
+	baseUrl, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	uri = baseUrl.ResolveReference(uri)
+	return uri.String()
 }
