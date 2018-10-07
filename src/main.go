@@ -42,18 +42,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("args", args)
 	queue := make(chan string)
 
 	go func() { queue <- args[0] }()
 
+	u, _ := url.Parse(args[0])
+
+	host := u.Host
+
 	for uri := range queue {
-		enqueue(uri, queue)
+		absolute := fixUrl(uri, host)
+		if !visited[uri] {
+			if strings.Contains(absolute, host) {
+				enqueue(uri, queue, host)
+			}
+		}
 	}
 	fmt.Println("REACHING_THE_END")
 }
 
-func enqueue(uri string, queue chan string) {
+func enqueue(uri string, queue chan string, host string) {
 	//TODO: add uri to visited since we just got our return
 	visited[uri] = true
 	transport := &http.Transport{
@@ -84,18 +92,17 @@ func enqueue(uri string, queue chan string) {
 
 	for _, link := range listOfLinks {
 		absolute := fixUrl(link.Href, uri)
-		if uri == "" {
-			fmt.Println("__URI_EMPTY")
-		}
 		if uri != "" {
 			if !visited[absolute] {
-				go func() { queue <- absolute }()
+				if strings.Contains(absolute, host) {
+					go func() { queue <- absolute }()
+				}
 			}
 		}
 	}
 
 	//TODO: check if the visiting address is related to the original argument passed in
-	fmt.Println("__VISITED", visited)
+	fmt.Println("=  =  =  =  =  VISITED", visited)
 }
 
 func fixUrl(href, base string) string {
